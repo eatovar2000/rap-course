@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -78,21 +78,20 @@
   <div class="card">
     <h1>Tu primera app RAP desde 0 (modo “restaurante” 🍽️)</h1>
     <p>
-      Construimos una mini app “Gestión de Tareas” (CRUD) con RAP.
       Flujo mental: <b>datos → comportamiento → servicio → UI</b>.
+      Avance por checklist + quiz (<b>aprobado = 100%</b>).
     </p>
     <div class="row">
       <span class="tag">Checklist por módulo</span>
       <span class="tag">Mini-quiz (2 preguntas/módulo)</span>
       <span class="tag">Aprobado = 100%</span>
-      <span class="tag">Progreso guardado</span>
     </div>
   </div>
 
   <div class="grid" style="margin-top:16px;">
     <div class="card">
       <h2>Registro / Acceso</h2>
-      <p class="small">Tu avance queda guardado para que el instructor lo revise cuando quiera.</p>
+      <p class="small">Primero inicia sesión. Luego se habilitan módulos (RLS: solo autenticados).</p>
 
       <div id="authBox">
         <label>Nombre completo</label>
@@ -107,7 +106,7 @@
         <input id="email" placeholder="tu@email.com" />
 
         <label>Contraseña</label>
-        <input id="password" type="password" placeholder="mínimo 6 caracteres" minlength="6" />
+        <input id="password" type="password" placeholder="mínimo 6 caracteres" />
 
         <div class="row" style="margin-top:12px;">
           <button class="btn btnAcc" id="btnSignUp">Crear cuenta</button>
@@ -129,16 +128,14 @@
       <div class="hr"></div>
 
       <h3>Progreso combinado</h3>
-      <p class="small">
-        Total = 50% checklist + 50% quiz (módulos aprobados al 100%).
-      </p>
+      <p class="small">Total = 50% checklist + 50% quiz (módulos aprobados al 100%).</p>
       <div class="progress"><div class="bar" id="progressBar"></div></div>
       <p class="small"><span id="progressTxt">0%</span></p>
     </div>
 
     <div class="card" id="ruta">
-      <h2>Ruta (clic en un módulo)</h2>
-      <p class="small">Marca checklist y aprueba el quiz (100%) para cerrar el módulo.</p>
+      <h2>Ruta</h2>
+      <p class="small" id="routeHint">Inicia sesión para ver los módulos.</p>
       <div class="list" id="modulesList"></div>
     </div>
   </div>
@@ -178,22 +175,9 @@
     </div>
   </div>
 
-  <div class="card" style="margin-top:16px;">
-    <h2>RAP en 60 segundos</h2>
-    <p>
-      - <b>CDS</b> = ingredientes (modelo/metadata) <br/>
-      - <b>Behavior</b> = receta (reglas, acciones, validaciones) <br/>
-      - <b>Implementación</b> = chef (lógica ABAP) <br/>
-      - <b>Service</b> = mesero (OData) <br/>
-      - <b>Fiori Elements</b> = menú (UI generada)
-    </p>
-  </div>
-
   <div class="card hide" style="margin-top:16px;" id="instructor">
     <h2>Panel del Instructor</h2>
-    <p class="small">
-      Avance por estudiante + detalle de fallos (pregunta, respondió, correcta).
-    </p>
+    <p class="small">Avance por estudiante + detalle de fallos.</p>
     <div class="hr"></div>
     <table>
       <thead>
@@ -214,11 +198,15 @@
 <script type="module">
   import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-  // ✅ Tus credenciales (OK para frontend)
+  // ✅ Tus credenciales
   const SUPABASE_URL = "https://zuwtnkfxxbidtzsmoexy.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp1d3Rua2Z4eGJpZHR6c21vZXh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NDAzOTUsImV4cCI6MjA4ODIxNjM5NX0.KX18kWCxdLl44e6A-ZUenU5IFuFiHXk38sq_W_-V_rA";
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  // Extra robustez: persist session + auto refresh
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true }
+  });
+
   const el = (id) => document.getElementById(id);
 
   // UI refs
@@ -239,6 +227,7 @@
   const helloName = el("helloName");
   const helloEmail = el("helloEmail");
 
+  const routeHint = el("routeHint");
   const modulesList = el("modulesList");
   const progressBar = el("progressBar");
   const progressTxt = el("progressTxt");
@@ -265,26 +254,22 @@
 
   let modules = [];
   let progressMap = new Map(); // module_code -> completed bool
-
   let quizQuestionsByModule = new Map(); // module_code -> [{id,...}]
-  let myAttempts = new Map(); // module_code -> {answers, score, total, passed}
+  let myAttempts = new Map(); // module_code -> attempt
 
   let selectedModule = null;
-  let selectedAnswers = {}; // {question_id: "A"|"B"|"C"}
+  let selectedAnswers = {}; // {question_id:"A"|"B"|"C"}
 
   // Content (ligero)
   const CONTENT = {
-    M01: {
-      explain: "RAP es un restaurante bien organizado: ingredientes (CDS), receta (Behavior), chef (ABAP), mesero (OData), menú (Fiori Elements).",
-      exercise: "Ejercicio: mapea tu caso real a la analogía:\n- Ingredientes: ¿qué datos?\n- Receta: ¿qué operaciones?\n- Chef: ¿qué validas?\n- Mesero: ¿cómo lo consumes?"
-    },
-    M02: { explain: "CDS define el contrato de datos (semántico) que se consume en servicio/UI.", exercise: "Define entidad Tarea: UUID, Title, Status, CreatedBy, CreatedAt.\nTip: ¿qué campos se llenan solos?" },
-    M03: { explain: "Behavior es la receta: CRUD, validaciones, acciones, locks.", exercise: "Define reglas:\n1) Title obligatorio\n2) Status solo OPEN/DONE" },
-    M04: { explain: "Implementación es el chef: validaciones/determinaciones en ABAP.", exercise: "Haz 2 cosas:\n- default Status = OPEN\n- validate Title no vacío" },
-    M05: { explain: "Service Definition/Binding publica tu modelo como OData (mesero).", exercise: "Checklist:\n- Service Definition expone ZI_TASK\n- Service Binding OData publicado" },
-    M06: { explain: "Fiori Elements genera UI desde metadata/annotations (menú).", exercise: "Prueba: crear 3 tareas, editar status, abrir detalle." },
-    M07: { explain: "Mensajes claros = control de calidad. El usuario debe entender qué falló.", exercise: "Redacta 2 mensajes de validación claros." },
-    M08: { explain: "End-to-end mínimo: CDS + Behavior + Service + UI + validaciones.", exercise: "Checklist final: CRUD + servicio publicado + UI navegable + validaciones." }
+    M01: { explain: "RAP es un restaurante: ingredientes (CDS), receta (Behavior), chef (ABAP), mesero (OData), menú (Fiori Elements).", exercise: "Ejercicio: mapea tu caso real:\n- Ingredientes: datos\n- Receta: CRUD/acciones\n- Chef: validaciones\n- Mesero: OData\n- Menú: Fiori Elements" },
+    M02: { explain: "CDS define el contrato de datos que consume servicio/UI.", exercise: "Define entidad Tarea: UUID, Title, Status, CreatedBy, CreatedAt.\n¿Cuáles se llenan solos?" },
+    M03: { explain: "Behavior es la receta: CRUD, validaciones, acciones, locks.", exercise: "Reglas:\n1) Title obligatorio\n2) Status solo OPEN/DONE" },
+    M04: { explain: "Implementación es el chef: lógicas ABAP (validations/determinations).", exercise: "Implementa mentalmente:\n- default Status = OPEN\n- validate Title no vacío" },
+    M05: { explain: "Service Definition + Binding publica tu modelo como OData.", exercise: "Checklist:\n- Service Definition expone entidad\n- Binding OData publicado" },
+    M06: { explain: "Fiori Elements genera UI desde metadata/annotations.", exercise: "Prueba: crear 3 tareas y editar status." },
+    M07: { explain: "Mensajes claros = control de calidad.", exercise: "Escribe 2 mensajes de validación claros." },
+    M08: { explain: "End-to-end mínimo: CDS + Behavior + Service + UI + validaciones.", exercise: "Checklist final: CRUD + servicio + UI + validaciones." }
   };
 
   // Utils
@@ -303,27 +288,20 @@
   }
 
   function isQuizPassed(moduleCode){
-    const a = myAttempts.get(moduleCode);
-    return a?.passed === true;
+    return myAttempts.get(moduleCode)?.passed === true;
   }
   function moduleChecklistDone(moduleCode){
     return progressMap.get(moduleCode) === true;
   }
 
   function calcChecklistPct(){
-    const total = modules.length;
-    const done = modules.filter(m => moduleChecklistDone(m.code)).length;
-    return pct(done, total);
+    return pct(modules.filter(m => moduleChecklistDone(m.code)).length, modules.length);
   }
   function calcQuizPct(){
-    const total = modules.length;
-    const done = modules.filter(m => isQuizPassed(m.code)).length;
-    return pct(done, total);
+    return pct(modules.filter(m => isQuizPassed(m.code)).length, modules.length);
   }
   function calcTotalPct(){
-    const c = calcChecklistPct();
-    const q = calcQuizPct();
-    return Math.round((c * 0.5) + (q * 0.5));
+    return Math.round(calcChecklistPct() * 0.5 + calcQuizPct() * 0.5);
   }
   function renderTotalProgress(){
     const total = calcTotalPct();
@@ -344,9 +322,8 @@
     modules.forEach(m => {
       const div = document.createElement("div");
       div.className = "mod";
-      const checked = moduleChecklistDone(m.code);
       div.innerHTML = `
-        <input type="checkbox" ${checked ? "checked" : ""} />
+        <input type="checkbox" ${moduleChecklistDone(m.code) ? "checked" : ""} />
         <div style="flex:1;">
           <b>${m.code} · ${m.title}</b>
           <span>Estimado: ${m.est_minutes} min · ${moduleStatusTag(m.code)}</span>
@@ -373,58 +350,59 @@
     const isInstructor = role === "instructor";
     navInstructor.classList.toggle("hide", !isInstructor);
     instructorSection.classList.toggle("hide", !isInstructor);
+
+    routeHint.textContent = logged ? "Selecciona un módulo." : "Inicia sesión para ver los módulos.";
   }
 
-  async function ensureProfile(full_name, cohortTxt){
-    const { data: { user } } = await supabase.auth.getUser();
-    if(!user) return;
-    const { error } = await supabase.from("profiles").insert({
-      id: user.id,
+  async function upsertProfile(userId, full_name, cohortTxt){
+    const { error } = await supabase.from("profiles").upsert({
+      id: userId,
       full_name,
       cohort: cohortTxt || null,
       role: "student"
     });
-    if(error && !String(error.message).toLowerCase().includes("duplicate")){
-      throw error;
-    }
+    if(error) throw error;
   }
 
-  // Data loaders
+  // Data loaders (solo cuando hay sesión)
   async function loadModules(){
     const { data, error } = await supabase.from("modules").select("*").order("order_no", { ascending: true });
     if(error) throw error;
     modules = data || [];
   }
-  async function loadMyProfile(){
-    if(!currentUser) return null;
-    const { data, error } = await supabase.from("profiles").select("*").eq("id", currentUser.id).maybeSingle();
-    if(error) throw error;
-    return data;
-  }
-  async function loadMyProgress(){
-    progressMap.clear();
-    if(!currentUser) return;
-    const { data, error } = await supabase.from("progress").select("module_code, completed").eq("user_id", currentUser.id);
-    if(error) throw error;
-    (data || []).forEach(r => progressMap.set(r.module_code, r.completed));
-  }
+
   async function loadQuizQuestions(){
     quizQuestionsByModule.clear();
     const { data, error } = await supabase
       .from("quiz_questions")
-      .select("id, module_code, question, opt_a, opt_b, opt_c, order_no")  // no correct_opt aquí
+      .select("id, module_code, question, opt_a, opt_b, opt_c, order_no")
       .order("module_code", { ascending: true })
       .order("order_no", { ascending: true });
     if(error) throw error;
+
     (data || []).forEach(q => {
       const arr = quizQuestionsByModule.get(q.module_code) || [];
       arr.push(q);
       quizQuestionsByModule.set(q.module_code, arr);
     });
   }
+
+  async function loadMyProfile(){
+    if(!currentUser) return null;
+    const { data, error } = await supabase.from("profiles").select("*").eq("id", currentUser.id).maybeSingle();
+    if(error) throw error;
+    return data;
+  }
+
+  async function loadMyProgress(){
+    progressMap.clear();
+    const { data, error } = await supabase.from("progress").select("module_code, completed").eq("user_id", currentUser.id);
+    if(error) throw error;
+    (data || []).forEach(r => progressMap.set(r.module_code, r.completed));
+  }
+
   async function loadMyAttempts(){
     myAttempts.clear();
-    if(!currentUser) return;
     const { data, error } = await supabase
       .from("quiz_attempts")
       .select("module_code, answers, score, total, passed")
@@ -433,7 +411,6 @@
     (data || []).forEach(a => myAttempts.set(a.module_code, a));
   }
 
-  // Checklist toggle
   async function toggleChecklist(moduleCode){
     if(!currentUser) return alert("Inicia sesión para guardar avance.");
     const newVal = !moduleChecklistDone(moduleCode);
@@ -445,7 +422,6 @@
       completed: newVal,
       updated_at: new Date().toISOString()
     });
-
     if(error){
       progressMap.set(moduleCode, !newVal);
       alert("No se pudo guardar checklist: " + error.message);
@@ -456,9 +432,8 @@
   }
 
   function renderDetailStatus(moduleCode){
-    const c = moduleChecklistDone(moduleCode);
-    checkTag.className = "tag " + (c ? "ok" : "");
-    checkTag.textContent = "Checklist: " + (c ? "completado" : "pendiente");
+    checkTag.className = "tag " + (moduleChecklistDone(moduleCode) ? "ok" : "");
+    checkTag.textContent = "Checklist: " + (moduleChecklistDone(moduleCode) ? "completado" : "pendiente");
 
     const attempt = myAttempts.get(moduleCode);
     if(attempt){
@@ -470,7 +445,6 @@
     }
   }
 
-  // Quiz UI
   function renderQuiz(moduleCode){
     quizBox.innerHTML = "";
     setQuizMsg("");
@@ -512,7 +486,7 @@
     }
   }
 
-  // ✅ Aprobado = 100%
+  // ✅ Aprobado = 100% (score === total)
   async function submitQuiz(moduleCode){
     if(!currentUser) return alert("Inicia sesión para calificar el quiz.");
 
@@ -526,7 +500,7 @@
       }
     }
 
-    // Traemos correct_opt SOLO para calificar (simple).
+    // Simple: traemos correct_opt para calificar
     const { data: keys, error } = await supabase
       .from("quiz_questions")
       .select("id, correct_opt")
@@ -544,7 +518,7 @@
       if(selectedAnswers[qid] === correctMap.get(qid)) score++;
     }
 
-    const passed = (total > 0) && (score === total); // ✅ 100%
+    const passed = (total > 0) && (score === total);
 
     const payload = {
       user_id: currentUser.id,
@@ -573,10 +547,8 @@
     }
   }
 
-  // Module selection
   function selectModule(moduleCode){
     selectedModule = moduleCode;
-
     const m = modules.find(x => x.code === moduleCode);
     const c = CONTENT[moduleCode] || { explain:"", exercise:"" };
 
@@ -594,25 +566,21 @@
     location.hash = "#detalle";
   }
 
-  // ------- Instructor: detalle de fallos -------
+  // ------- Instructor: fallos -------
   function optLabel(opt){ return opt ? opt.toUpperCase() : "(sin responder)"; }
 
   async function buildFailureReportForUser(userId){
-    // Traer intentos del usuario
     const { data: attempts, error: e1 } = await supabase
       .from("quiz_attempts")
       .select("module_code, answers, score, total, passed")
       .eq("user_id", userId);
-
     if(e1) throw e1;
 
-    // Traer banco completo con correct_opt (para comparar)
     const { data: bank, error: e2 } = await supabase
       .from("quiz_questions")
-      .select("id, module_code, question, opt_a, opt_b, opt_c, correct_opt, order_no")
+      .select("id, module_code, question, correct_opt, order_no")
       .order("module_code", { ascending: true })
       .order("order_no", { ascending: true });
-
     if(e2) throw e2;
 
     const questionsByModule = new Map();
@@ -628,13 +596,9 @@
     for(const m of modules){
       const a = attemptsMap.get(m.code);
       const qlist = questionsByModule.get(m.code) || [];
-
       if(!a){
         report.push({ module: m.code, title: m.title, status: "sin intento", fails: qlist.map(q => ({
-          question: q.question,
-          chosen: null,
-          correct: q.correct_opt,
-          explain: `Correcta: ${q.correct_opt}`
+          question: q.question, chosen: null, correct: q.correct_opt
         }))});
         continue;
       }
@@ -645,22 +609,11 @@
         const chosen = answers[String(q.id)] || null;
         const correct = q.correct_opt;
         if(chosen !== correct){
-          fails.push({
-            question: q.question,
-            chosen,
-            correct,
-            explain:
-              `Respondió: ${optLabel(chosen)} · Correcta: ${optLabel(correct)}`
-          });
+          fails.push({ question: q.question, chosen, correct });
         }
       }
 
-      report.push({
-        module: m.code,
-        title: m.title,
-        status: a.passed ? "aprobado" : "no aprobado",
-        fails
-      });
+      report.push({ module: m.code, title: m.title, status: a.passed ? "aprobado" : "no aprobado", fails });
     }
 
     return report;
@@ -704,8 +657,8 @@
       const total = Math.round((cPct*0.5) + (qPct*0.5));
 
       const tr = document.createElement("tr");
-
       const detailsId = `d_${p.id.replaceAll("-","")}`;
+
       tr.innerHTML = `
         <td>${p.full_name}</td>
         <td>${p.cohort || ""}</td>
@@ -717,10 +670,8 @@
           <div id="${detailsId}" class="hide" style="margin-top:10px;"></div>
         </td>
       `;
-
       instructorTable.appendChild(tr);
 
-      // bind
       tr.querySelector("button").addEventListener("click", async (e) => {
         const userId = e.target.getAttribute("data-user");
         const targetId = e.target.getAttribute("data-target");
@@ -738,10 +689,7 @@
 
         try{
           const report = await buildFailureReportForUser(userId);
-
-          const details = document.createElement("div");
-          details.innerHTML = report.map(r => {
-            const failCount = r.fails.length;
+          box.innerHTML = report.map(r => {
             const statusTag =
               r.status === "aprobado" ? `<span class="tag ok">Aprobado</span>` :
               r.status === "sin intento" ? `<span class="tag bad">Sin intento</span>` :
@@ -749,19 +697,17 @@
 
             return `
               <details style="margin-top:10px;">
-                <summary>${r.module} · ${r.title} — ${statusTag} · Fallos: ${failCount}</summary>
-                ${failCount === 0 ? `<p class="small">Sin fallos. Perfecto.</p>` : ""}
+                <summary>${r.module} · ${r.title} — ${statusTag} · Fallos: ${r.fails.length}</summary>
+                ${r.fails.length === 0 ? `<p class="small">Sin fallos. Perfecto.</p>` : ""}
                 ${r.fails.map(f => `
                   <div class="failItem">
                     <div><b>${f.question}</b></div>
-                    <div class="small">${f.explain}</div>
+                    <div class="small">Respondió: ${optLabel(f.chosen)} · Correcta: ${optLabel(f.correct)}</div>
                   </div>
                 `).join("")}
               </details>
             `;
           }).join("");
-
-          box.appendChild(details);
           e.target.textContent = "Ocultar";
         } catch(err){
           box.innerHTML = `<p class="small" style="color:#fecdd3;">Error: ${err.message || err}</p>`;
@@ -771,24 +717,39 @@
     }
   }
 
-  // Buttons
+  // ---- Auth handlers (CORREGIDOS) ----
   el("btnSignUp").addEventListener("click", async () => {
     try{
       setMsg("");
       const nm = fullName.value.trim();
+      const ch = cohort.value.trim();
       const em = email.value.trim();
       const pw = password.value.trim();
+
       if(!nm) return setMsg("Escribe tu nombre completo.", true);
       if(!em || !pw) return setMsg("Email y contraseña son obligatorios.", true);
 
-      const { error } = await supabase.auth.signUp({ email: em, password: pw });
-      if(error) throw error;
+      // 1) crear usuario
+      const { error: e1 } = await supabase.auth.signUp({ email: em, password: pw });
+      if(e1){
+        setMsg("No se pudo crear cuenta: " + e1.message, true);
+        return;
+      }
 
-      await ensureProfile(nm, cohort.value.trim());
-      setMsg("Cuenta creada. Inicia sesión para comenzar.");
+      // 2) forzar login (garantiza sesión para RLS y para insertar profile)
+      const { data: s2, error: e2 } = await supabase.auth.signInWithPassword({ email: em, password: pw });
+      if(e2){
+        setMsg("Cuenta creada, pero no pude iniciar sesión: " + e2.message, true);
+        return;
+      }
+
+      // 3) upsert profile usando userId directo (no dependemos de getUser)
+      await upsertProfile(s2.user.id, nm, ch);
+
+      setMsg("Cuenta creada e iniciada ✅ Ya puedes empezar.");
       await refresh();
     } catch(err){
-      setMsg(err.message || String(err), true);
+      setMsg("Error: " + (err.message || String(err)), true);
     }
   });
 
@@ -797,18 +758,42 @@
       setMsg("");
       const em = email.value.trim();
       const pw = password.value.trim();
-      const { error } = await supabase.auth.signInWithPassword({ email: em, password: pw });
-      if(error) throw error;
 
-      setMsg("Sesión iniciada.");
+      const { data, error } = await supabase.auth.signInWithPassword({ email: em, password: pw });
+      if (error) {
+        setMsg("Login falló: " + error.message, true);
+        return;
+      }
+
+      // Si no existe profile aún, lo creamos con lo que haya en el form (o placeholder)
+      // (por si el user fue creado antes de que corrigieras el flujo)
+      const nm = fullName.value.trim() || "Estudiante";
+      const ch = cohort.value.trim();
+
+      // Intentar leer profile; si no está, insertarlo
+      const { data: prof, error: pErr } = await supabase.from("profiles").select("*").eq("id", data.user.id).maybeSingle();
+      if(pErr){
+        setMsg("Sesión OK, pero error leyendo profile: " + pErr.message, true);
+      } else if(!prof){
+        await upsertProfile(data.user.id, nm, ch);
+      }
+
+      setMsg("Sesión iniciada ✅");
       await refresh();
     } catch(err){
-      setMsg(err.message || String(err), true);
+      setMsg("Error: " + (err.message || String(err)), true);
     }
   });
 
   el("btnSignOut").addEventListener("click", async () => {
     await supabase.auth.signOut();
+    selectedModule = null;
+    modules = [];
+    quizQuestionsByModule.clear();
+    progressMap.clear();
+    myAttempts.clear();
+    detailBody.classList.add("hide");
+    renderModules();
     await refresh();
   });
 
@@ -824,12 +809,9 @@
     progressMap.clear();
     myAttempts.clear();
     selectedModule = null;
-
     detailBody.classList.add("hide");
-    detailTitle.textContent = "Detalle del módulo";
-    detailMeta.textContent = "Selecciona un módulo de la ruta.";
-
     renderModules();
+    await refresh();
   });
 
   btnToggleChecklist.addEventListener("click", async () => {
@@ -843,27 +825,34 @@
     await submitQuiz(selectedModule);
   });
 
-  // Refresh
+  // Refresh (CORREGIDO: solo carga módulos si hay sesión)
   async function refresh(){
-    await loadModules();
-    await loadQuizQuestions();
-
     const { data: { user } } = await supabase.auth.getUser();
     currentUser = user || null;
-    currentProfile = await loadMyProfile();
 
-    if(currentUser){
-      await loadMyProgress();
-      await loadMyAttempts();
-    } else {
+    if(!currentUser){
+      currentProfile = null;
+      modules = [];
+      quizQuestionsByModule.clear();
       progressMap.clear();
       myAttempts.clear();
+      setAuthUI();
+      renderModules();
+      return;
     }
+
+    // Con sesión: ahora sí puede leer módulos/preguntas (RLS authenticated)
+    currentProfile = await loadMyProfile();
+
+    await loadModules();
+    await loadQuizQuestions();
+    await loadMyProgress();
+    await loadMyAttempts();
 
     setAuthUI();
     renderModules();
 
-    if(selectedModule){
+    if(selectedModule && modules.some(m => m.code === selectedModule)){
       selectModule(selectedModule);
     }
 
@@ -872,8 +861,10 @@
     }
   }
 
+  // Refrescar cuando cambia estado de sesión
   supabase.auth.onAuthStateChange(async () => { await refresh(); });
 
+  // init
   (async () => {
     try { await refresh(); }
     catch(err){ alert("Error inicial: " + (err.message || err)); }
