@@ -275,10 +275,11 @@
   // Utils
   const pct = (n, d) => (d === 0 ? 0 : Math.round((n / d) * 100));
 
-  function setMsg(txt, isError=false){
-    authMsg.textContent = txt || "";
-    authMsg.style.color = isError ? "#fca5a5" : "#a7f3d0";
-  }
+ function setMsg(txt, isError=false){
+  authMsg.textContent = txt || "";
+  authMsg.style.color = isError ? "#fca5a5" : "#a7f3d0";
+  if(isError && txt) alert(txt); // <- para que NUNCA pase desapercibido
+}
   function setQuizMsg(txt, tone="muted"){
     quizMsg.textContent = txt || "";
     quizMsg.style.color =
@@ -718,72 +719,123 @@
   }
 
   // ---- Auth handlers (CORREGIDOS) ----
-  el("btnSignUp").addEventListener("click", async () => {
-    try{
-      setMsg("");
-      const nm = fullName.value.trim();
-      const ch = cohort.value.trim();
-      const em = email.value.trim();
-      const pw = password.value.trim();
+function hardMsg(txt, isError=false){
+  setMsg(txt, isError);
+  // Esto te asegura que aunque no veas el texto, te enteras
+  console[isError ? "error" : "log"](txt);
+}
 
-      if(!nm) return setMsg("Escribe tu nombre completo.", true);
-      if(!em || !pw) return setMsg("Email y contraseña son obligatorios.", true);
+el("btnSignUp").addEventListener("click", async () => {
+  const btn = el("btnSignUp");
+  btn.disabled = true;
+  try{
+    hardMsg("Creando cuenta...", false);
 
-      // 1) crear usuario
-      const { error: e1 } = await supabase.auth.signUp({ email: em, password: pw });
-      if(e1){
-        setMsg("No se pudo crear cuenta: " + e1.message, true);
-        return;
-      }
+    const nm = fullName.value.trim();
+    const ch = cohort.value.trim();
+    const em = email.value.trim();
+    const pw = password.value.trim();
 
-      // 2) forzar login (garantiza sesión para RLS y para insertar profile)
-      const { data: s2, error: e2 } = await supabase.auth.signInWithPassword({ email: em, password: pw });
-      if(e2){
-        setMsg("Cuenta creada, pero no pude iniciar sesión: " + e2.message, true);
-        return;
-      }
+    if(!nm){ hardMsg("Escribe tu nombre completo.", true); return; }
+    if(!em || !pw){ hardMsg("Email y contraseña son obligatorios.", true); return; }
 
-      // 3) upsert profile usando userId directo (no dependemos de getUser)
-      await upsertProfile(s2.user.id, nm, ch);
-
-      setMsg("Cuenta creada e iniciada ✅ Ya puedes empezar.");
-      await refresh();
-    } catch(err){
-      setMsg("Error: " + (err.message || String(err)), true);
+    // 1) Sign up
+    const r1 = await supabase.auth.signUp({ email: em, password: pw });
+    if(r1.error){
+      hardMsg("No se pudo crear cuenta: " + r1.error.message, true);
+      return;
     }
-  });
 
-  el("btnSignIn").addEventListener("click", async () => {
-    try{
-      setMsg("");
-      const em = email.value.trim();
-      const pw = password.value.trim();
+    // 2) Forzar login para garantizar sesión
+    hardMsg("Cuenta creada. Iniciando sesión...", false);
+    const r2 = await supabase.auth.signInWithPassword({ email: em, password: pw });
+    if(r2.error){
+      hardMsg("Cuenta creada, pero login falló: " + r2.error.message, true);
+      return;
+    }
 
-      const { data, error } = await supabase.auth.signInWithPassword({ email: em, password: pw });
-      if (error) {
-        setMsg("Login falló: " + error.message, true);
+    // 3) Crear profile (aquí suele fallar por RLS)
+    hardMsg("Creando perfil en BD (profiles)...", false);
+    const userId = r2.data.user.id;
+
+    const r3 = await supabase.from("profiles").upsert({
+      id: userId,
+      full_name: nm,
+      cohort: ch || null,
+      role: "student"
+    });
+
+    if(r3.error){
+      // Esto te dirá EXACTAMENTE si es RLS o algo de tabla
+      hardMsg("ERROR guardando profiles: " + r3.error.message, true);
+      alert("ERROR guardando profiles: " + r3.error.message);
+      return;
+    }
+
+    hardMsg("✅ Cuenta lista y perfil creado. Ya puedes entrar a módulos.", false);
+    await refresh();
+  } catch(err){
+    hardMsg("Error inesperado en signup: " + (err?.message || String(err)), true);
+    alert("Error inesperado en signup: " + (err?.message || String(err)));
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+el("btnSignIn").addEventListener("click", async () => {
+  const btn = el("btnSignIn");
+  btn.disabled = true;
+  try{
+    hardMsg("Iniciando sesión...", false);
+
+    const em = email.value.trim();
+    const pw = password.value.trim();
+    if(!em || !pw){ hardMsg("Email y contraseña son obligatorios.", true); return; }
+
+    const r = await supabase.auth.signInWithPassword({ email: em, password: pw });
+    if(r.error){
+      hardMsg("Login falló: " + r.error.message, true);
+      alert("Login falló: " + r.error.message);
+      return;
+    }
+
+    hardMsg("✅ Sesión iniciada.", false);
+
+    // Asegurar profile (por si user existía sin profile)
+    const userId = r.data.user.id;
+    const nm = fullName.value.trim() || "Estudiante";
+    const ch = cohort.value.trim();
+
+    const prof = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+    if(prof.error){
+      hardMsg("Sesión OK, pero error leyendo profile: " + prof.error.message, true);
+      alert("Error leyendo profile: " + prof.error.message);
+      return;
+    }
+
+    if(!prof.data){
+      const ins = await supabase.from("profiles").insert({
+        id: userId,
+        full_name: nm,
+        cohort: ch || null,
+        role: "student"
+      });
+      if(ins.error){
+        hardMsg("Login OK, pero NO pude crear profile: " + ins.error.message, true);
+        alert("NO pude crear profile: " + ins.error.message);
         return;
       }
-
-      // Si no existe profile aún, lo creamos con lo que haya en el form (o placeholder)
-      // (por si el user fue creado antes de que corrigieras el flujo)
-      const nm = fullName.value.trim() || "Estudiante";
-      const ch = cohort.value.trim();
-
-      // Intentar leer profile; si no está, insertarlo
-      const { data: prof, error: pErr } = await supabase.from("profiles").select("*").eq("id", data.user.id).maybeSingle();
-      if(pErr){
-        setMsg("Sesión OK, pero error leyendo profile: " + pErr.message, true);
-      } else if(!prof){
-        await upsertProfile(data.user.id, nm, ch);
-      }
-
-      setMsg("Sesión iniciada ✅");
-      await refresh();
-    } catch(err){
-      setMsg("Error: " + (err.message || String(err)), true);
+      hardMsg("Profile creado ✅", false);
     }
-  });
+
+    await refresh();
+  } catch(err){
+    hardMsg("Error inesperado en login: " + (err?.message || String(err)), true);
+    alert("Error inesperado en login: " + (err?.message || String(err)));
+  } finally {
+    btn.disabled = false;
+  }
+});
 
   el("btnSignOut").addEventListener("click", async () => {
     await supabase.auth.signOut();
