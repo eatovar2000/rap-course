@@ -965,20 +965,13 @@
     await submitQuiz(selectedModule);
   });
 
-  // ✅ FIX principal: usar session del evento (no getUser)
+  // onAuthStateChange dispara INITIAL_SESSION al cargar si hay sesión guardada.
+  // No se necesita IIFE con getSession() — eso causaba AbortError (lock conflict).
   supabase.auth.onAuthStateChange(async (event, session) => {
     console.log("Auth event:", event);
     currentUser = session?.user || null;
     await refreshData();
   });
-
-  // Init: lee session actual (más confiable que getUser en algunos casos)
-  (async () => {
-    const { data, error } = await supabase.auth.getSession();
-    if(error) console.error("getSession error:", error);
-    currentUser = data?.session?.user || null;
-    await refreshData();
-  })();
 </script>
 </body>
 </html>
