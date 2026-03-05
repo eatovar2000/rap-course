@@ -274,6 +274,7 @@
 
   let selectedModule = null;
   let selectedAnswers = {};            // question_id -> "A|B|C"
+  let refreshing = false;              // guard: evita ejecuciones concurrentes de refreshData
 
   const CONTENT = {
     M01: {
@@ -736,7 +737,11 @@
   }
 
   // ✅ IMPORTANTE: En vez de getUser(), usamos SIEMPRE session.user cuando exista
+  // Fix: guard de concurrencia + manejo granular de errores por paso
   async function refreshData(){
+    if(refreshing) return;
+    refreshing = true;
+
     try{
       if(!currentUser){
         currentProfile = null;
@@ -749,18 +754,56 @@
         return;
       }
 
-      // 1) Profile
-      currentProfile = await loadMyProfile();
+      // 1) Perfil (no crítico: si falla, continúa con rol null)
+      try{
+        currentProfile = await loadMyProfile();
+      } catch(e){
+        console.error("[refreshData] loadMyProfile:", e?.message || e);
+        currentProfile = null;
+      }
 
-      // 2) Curso data
-      await loadModules();
-      await loadQuizQuestions();
-
-      // 3) Progreso usuario
-      await loadMyProgress();
-      await loadMyAttempts();
-
+      // Actualiza la UI de auth antes de mostrar cualquier error
       setAuthUI();
+
+      // 2) Módulos del curso (crítico: sin módulos no hay nada que mostrar)
+      try{
+        await loadModules();
+      } catch(e){
+        setUserMsg("No se pudieron cargar los módulos: " + (e?.message || e), true);
+        return;
+      }
+
+      if(modules.length === 0){
+        setUserMsg(
+          "No se encontraron módulos. Verifica en Supabase: " +
+          "¿la tabla 'modules' tiene filas? ¿RLS permite SELECT a usuarios autenticados?",
+          true
+        );
+        renderModules();
+        return;
+      }
+
+      // 3) Preguntas del quiz (no crítico: quiz queda vacío si falla)
+      try{
+        await loadQuizQuestions();
+      } catch(e){
+        console.error("[refreshData] loadQuizQuestions:", e?.message || e);
+      }
+
+      // 4) Progreso del usuario (no crítico: muestra 0% si falla)
+      try{
+        await loadMyProgress();
+      } catch(e){
+        console.error("[refreshData] loadMyProgress:", e?.message || e);
+      }
+
+      // 5) Intentos de quiz (no crítico)
+      try{
+        await loadMyAttempts();
+      } catch(e){
+        console.error("[refreshData] loadMyAttempts:", e?.message || e);
+      }
+
       renderModules();
 
       if(selectedModule && modules.some(m => m.code === selectedModule)){
@@ -768,11 +811,14 @@
       }
 
       if(currentProfile?.role === "instructor"){
-        await loadInstructorDashboard();
+        try{
+          await loadInstructorDashboard();
+        } catch(e){
+          console.error("[refreshData] loadInstructorDashboard:", e?.message || e);
+        }
       }
-    } catch (e){
-      // Si algo falla, lo verás aquí (no silencios)
-      setUserMsg("Error cargando datos: " + (e?.message || e), true);
+    } finally {
+      refreshing = false;
     }
   }
 
