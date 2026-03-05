@@ -110,6 +110,14 @@
         <label>Cohorte (opcional)</label>
         <input id="cohort" placeholder="Ej: Marzo 2026" />
 
+        <label style="cursor:pointer;display:flex;align-items:center;gap:6px;margin-top:4px;">
+          <input type="checkbox" id="chkInstructor"> Registrarme como Instructor
+        </label>
+        <div id="instructorCodeRow" style="display:none;margin-top:6px;">
+          <label>Código de Instructor</label>
+          <input type="password" id="instructorCode" placeholder="Código secreto" />
+        </div>
+
         <div class="hr"></div>
 
         <label>Email</label>
@@ -193,7 +201,10 @@
   </div>
 
   <div class="card hide" style="margin-top:16px;" id="instructor">
-    <h2>Panel del Instructor</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <h2>Panel del Instructor</h2>
+      <button class="btn" id="btnRefreshInstructor" style="font-size:0.85rem;">↻ Actualizar</button>
+    </div>
     <p class="small">Avance por estudiante + detalle de fallos (pregunta, respondió, correcta).</p>
     <div class="hr"></div>
     <table>
@@ -274,39 +285,40 @@
 
   let selectedModule = null;
   let selectedAnswers = {};            // question_id -> "A|B|C"
+  let refreshing = false;              // guard: evita ejecuciones concurrentes de refreshData
 
   const CONTENT = {
     M01: {
-      explain: "Vista general: RAP es un restaurante. Si entiendes el flujo, el resto cae en su lugar.",
-      exercise: "Mapea tu app RAP como restaurante:\n- CDS = ingredientes\n- Behavior = receta\n- Implementación = chef\n- Service = mesero (OData)\n- Fiori Elements = menú (UI)\n\n✅ Meta: una app RAP de Tareas."
+      explain: "RAP (RESTful ABAP Programming Model) es el modelo moderno de SAP para apps cloud-ready con Fiori. Funciona en capas: la tabla DB guarda los datos, las CDS Views los modelan como entidades de negocio, el Behavior Definition declara las reglas, la clase de implementación ABAP ejecuta esa lógica, y el Service Binding expone todo como OData V4 para que Fiori Elements genere la UI automáticamente. Piénsalo como un restaurante: DB=almacén, CDS=ingredientes, Behavior=receta, Impl.=chef, Service=mesero, Fiori=menú. En este módulo creas el paquete ABAP y la tabla ZTASKS — la materia prima de toda la app.",
+      exercise: "OBJETIVO: Crear el paquete ABAP y la tabla de base de datos ZTASKS.\n\nARTEFACTOS QUE CREARÁS:\n  • ZPKG_TASKS  — Paquete ABAP contenedor\n  • ZTASKS      — Tabla de base de datos\n\n═══════════════════════════════════════════════\nPASO 1 — Crear el paquete ABAP\n═══════════════════════════════════════════════\nEn el Project Explorer de ADT (Eclipse):\n  1. Clic derecho en tu proyecto ABAP\n  2. New → ABAP Package\n  3. Completa:\n       Name:         ZPKG_TASKS\n       Description:  App de Tareas RAP\n       Package type: Development\n  4. Next → asigna o crea un Transport Request\n  5. Finish\n\n═══════════════════════════════════════════════\nPASO 2 — Crear la tabla ZTASKS\n═══════════════════════════════════════════════\n  1. Clic derecho en ZPKG_TASKS\n  2. New → Other ABAP Repository Object\n  3. Busca: Dictionary → Database Table\n  4. Name: ZTASKS, Description: Tareas\n  5. Finish → se abre el editor DDL\n\n═══════════════════════════════════════════════\nPASO 3 — Definir los campos de la tabla\n═══════════════════════════════════════════════\nReemplaza el contenido del editor con:\n\n@EndUserText.label : ‘Tareas’\n@AbapCatalog.enhancement.category : #NOT_EXTENSIBLE\n@AbapCatalog.tableCategory : #TRANSPARENT\n@AbapCatalog.deliveryClass : #A\n@AbapCatalog.dataMaintenance : #RESTRICTED\ndefine table ztasks {\n  key client    : abap.clnt not null;\n  key task_id   : sysuuid_x16 not null;\n  title         : abap.char(100) not null;\n  status        : abap.char(10);\n  priority      : abap.char(6);\n  due_date      : abap.dats;\n  created_at    : abp_creation_tstmpl;\n  created_by    : abp_creation_user;\n  changed_at    : abp_lastchange_tstmpl;\n  changed_by    : abp_lastchange_user;\n}\n\n💡 Los tipos abp_creation_* son tipos estándar de RAP\n   para trazabilidad automática (no los implementas tú).\n\n═══════════════════════════════════════════════\nPASO 4 — Activar la tabla\n═══════════════════════════════════════════════\n  Ctrl + F3 → confirma sin errores\n\n✅ VERIFICACIÓN\n  Clic derecho en ZTASKS → Open With → Data Preview\n  La tabla aparece vacía (0 registros). Correcto.\n\nMAPEO DE ARTEFACTOS DEL CURSO:\n  Módulo  Artefacto          Nombre\n  M01     Package            ZPKG_TASKS\n  M01     DB Table           ZTASKS\n  M02     CDS Root View      ZI_TASKS\n  M03     Behavior Def.      ZI_TASKS (BDEF)\n  M04     Behavior Impl.     ZBP_I_TASKS\n  M05     Service Definition ZSD_TASKS\n  M05     Service Binding    ZSB_TASKS_V4\n  M06     Projection View    ZC_TASKS"
     },
     M02: {
-      explain: "CDS define el contrato de datos (lo que el ‘menú’ puede mostrar).",
-      exercise: "Define entidad Tarea:\n- ID (UUID)\n- Title\n- Status (OPEN/DONE)\n- CreatedAt, CreatedBy\n\n¿Cuáles deberían ser solo lectura?"
+      explain: "Las CDS Root View Entities modelan tu Business Object (BO): transforman los campos técnicos de la tabla en una entidad de negocio con semántica. La vista ZI_TASKS usa el prefijo ‘I’ (Interface) — es la vista base interna que nunca se expone directamente al servicio. Aquí defines qué campo es la clave UUID, cuáles son administrados por el framework RAP (timestamps de auditoría) y las anotaciones de catálogo y control de acceso. Esta vista es la que el Behavior Definition referencia como fuente de verdad del modelo.",
+      exercise: "OBJETIVO: Crear la CDS Root View Entity ZI_TASKS sobre la tabla ZTASKS.\n\nARTEFACTO QUE CREARÁS:\n  • ZI_TASKS — CDS Root View Entity (vista base del BO)\n\n═══════════════════════════════════════════════\nPASO 1 — Crear la Data Definition\n═══════════════════════════════════════════════\n  1. Clic derecho en ZPKG_TASKS\n  2. New → Other ABAP Repository Object\n  3. Core Data Services → Data Definition\n  4. Name: ZI_TASKS, Description: Vista raíz de Tareas\n  5. Next → Template: Define Root View Entity\n  6. Finish → se abre el editor CDS\n\n═══════════════════════════════════════════════\nPASO 2 — Escribir la CDS Root View Entity\n═══════════════════════════════════════════════\nReemplaza el contenido con:\n\n@AbapCatalog.viewEnhancementCategory: [#NONE]\n@AccessControl.authorizationCheck: #NOT_REQUIRED\n@EndUserText.label: ‘Tareas’\n@Metadata.ignorePropagatedAnnotations: true\n@ObjectModel.usageType:{\n  serviceQuality: #X,\n  sizeCategory: #S,\n  dataClass: #MASTER }\n\ndefine root view entity ZI_TASKS\n  as select from ztasks\n{\n  key task_id   as TaskId,\n  title         as Title,\n  status        as Status,\n  priority      as Priority,\n  due_date      as DueDate,\n  created_at    as CreatedAt,\n  created_by    as CreatedBy,\n  changed_at    as ChangedAt,\n  changed_by    as ChangedBy\n}\n\n💡 El alias CamelCase (TaskId, Title…) es la convención RAP.\n   El campo ‘client’ no se incluye — RAP lo gestiona solo.\n\n═══════════════════════════════════════════════\nPASO 3 — Activar\n═══════════════════════════════════════════════\n  Ctrl + F3 → sin errores\n\n✅ VERIFICACIÓN\n  Clic derecho en ZI_TASKS → Open With → Data Preview\n  Aparecen las columnas definidas (sin datos). Correcto.\n\nCONCEPTOS CLAVE:\n  define root view entity → Raíz de un Business Object RAP\n  as select from ztasks   → Proyecta desde la tabla transparente\n  key task_id as TaskId   → UUID es la clave técnica del BO\n  @AccessControl: #NOT_REQUIRED → Sin check de auth (solo desarrollo)"
     },
     M03: {
-      explain: "Behavior es la receta: qué se puede hacer y bajo qué reglas.",
-      exercise: "Reglas:\n1) Title obligatorio\n2) Status solo OPEN/DONE\n3) Acción: MarkDone"
+      explain: "El Behavior Definition (BDEF) es el contrato de comportamiento de tu BO: declara qué operaciones existen (create, update, delete), qué campos son obligatorios o de solo lectura, y qué lógica especial se ejecutará. Con ‘managed’ el framework RAP maneja el CRUD automáticamente en la DB. Las validaciones se ejecutan al guardar (on save), las determinaciones al crear o modificar. El BDEF no contiene código ABAP — solo declaraciones. La implementación va en la clase ZBP_I_TASKS que crearás en el Módulo 4.",
+      exercise: "OBJETIVO: Crear el Behavior Definition de ZI_TASKS declarando\n          CRUD, campos obligatorios, validaciones y la acción MarkDone.\n\nARTEFACTO QUE CREARÁS:\n  • ZI_TASKS (BDEF) — Behavior Definition\n\n═══════════════════════════════════════════════\nPASO 1 — Crear el Behavior Definition\n═══════════════════════════════════════════════\n  1. Clic derecho en ZI_TASKS (la CDS View)\n  2. New → Behavior Definition\n  3. El nombre se autocompleta: ZI_TASKS\n  4. Implementation Type: Managed\n  5. Finish → se abre el editor BDEF\n\n═══════════════════════════════════════════════\nPASO 2 — Escribir el Behavior Definition\n═══════════════════════════════════════════════\nReemplaza con:\n\nmanaged implementation in class ZBP_I_TASKS unique;\nstrict ( 2 );\n\ndefine behavior for ZI_TASKS\n  alias Task\n  persistent table ztasks\n  lock master\n  authorization master ( instance )\n  etag master ChangedAt\n{\n  create;\n  update;\n  delete;\n\n  field ( readonly ) TaskId;\n  field ( readonly ) CreatedAt, CreatedBy, ChangedAt, ChangedBy;\n  field ( mandatory ) Title;\n\n  validation validateTitle  on save { field Title;  create; update; }\n  validation validateStatus on save { field Status; create; update; }\n\n  determination setDefaultStatus on create { field Status; }\n\n  action markDone result [1] $self;\n\n  mapping for ztasks corresponding\n  {\n    TaskId    = task_id;\n    Title     = title;\n    Status    = status;\n    Priority  = priority;\n    DueDate   = due_date;\n    CreatedAt = created_at;\n    CreatedBy = created_by;\n    ChangedAt = changed_at;\n    ChangedBy = changed_by;\n  }\n}\n\n═══════════════════════════════════════════════\nPASO 3 — Activar\n═══════════════════════════════════════════════\n  Ctrl + F3\n  ⚠️  Warnings de clase ZBP_I_TASKS no existente → normal.\n      Se crea en M04.\n\nCONCEPTOS CLAVE:\n  managed            → RAP maneja CRUD en DB automáticamente\n  strict(2)          → Sintaxis BDEF estricta (recomendado)\n  lock master        → Optimistic locking (un usuario a la vez)\n  etag master        → Campo que detecta cambios concurrentes\n  field (mandatory)  → Obliga el campo en create/update\n  field (readonly)   → No editable desde la UI\n  validation X on save { field Y; }\n                     → Se ejecuta al guardar si Y cambió\n  determination X on create { }\n                     → Se ejecuta al crear el registro\n  action markDone    → Operación de negocio personalizada\n  mapping { ... }    → Alias CDS → columna DB"
     },
     M04: {
-      explain: "Implementación = chef: determinations (defaults) y validations.",
-      exercise: "Determination: si Status vacío → OPEN\nValidation: si Title vacío → error"
+      explain: "La clase ZBP_I_TASKS implementa la lógica declarada en el BDEF. Es una clase ABAP especial (FOR BEHAVIOR OF ZI_TASKS) donde cada método corresponde a una validación, determinación o acción. ADT genera el esqueleto automáticamente desde el BDEF usando Quick Fix. validateTitle verifica que el campo no esté vacío; setDefaultStatus asigna Status=’OPEN’ al crear; markDone cambia el Status a ‘DONE’. Los errores se reportan llenando las tablas implícitas ‘failed’ y ‘reported’ — el framework las envía de vuelta a Fiori.",
+      exercise: "OBJETIVO: Implementar validaciones, determinación de status\n          por defecto y la acción MarkDone en ZBP_I_TASKS.\n\nARTEFACTO QUE CREARÁS:\n  • ZBP_I_TASKS — Clase de implementación del Behavior\n\n═══════════════════════════════════════════════\nPASO 1 — Generar la clase desde el BDEF\n═══════════════════════════════════════════════\n  1. Abre el BDEF ZI_TASKS\n  2. Posiciona el cursor sobre ‘ZBP_I_TASKS’\n  3. Ctrl+1 (Quick Fix)\n  4. Selecciona: \"Create behavior implementation class\"\n  5. Package: ZPKG_TASKS → Finish\n     → ZBP_I_TASKS se crea con métodos vacíos generados\n\n═══════════════════════════════════════════════\nPASO 2 — Implementar validateTitle\n═══════════════════════════════════════════════\n  METHOD validateTitle.\n    READ ENTITIES OF ZI_TASKS IN LOCAL MODE\n      ENTITY Task FIELDS ( TaskId Title )\n      WITH CORRESPONDING #( keys )\n      RESULT DATA(tasks).\n\n    LOOP AT tasks INTO DATA(task).\n      IF task-Title IS INITIAL.\n        APPEND VALUE #( %tky = task-%tky )\n          TO failed-Task.\n        APPEND VALUE #(\n          %tky           = task-%tky\n          %state_area    = ‘VALIDATE_TITLE’\n          %msg           = new_message_with_text(\n            severity = if_abap_behv_message=>severity-error\n            text     = ‘El título es obligatorio. Ingresa un nombre para la tarea.’ )\n          %element-Title = if_abap_behv=>mk-on\n        ) TO reported-Task.\n      ENDIF.\n    ENDLOOP.\n  ENDMETHOD.\n\n═══════════════════════════════════════════════\nPASO 3 — Implementar validateStatus\n═══════════════════════════════════════════════\n  METHOD validateStatus.\n    READ ENTITIES OF ZI_TASKS IN LOCAL MODE\n      ENTITY Task FIELDS ( TaskId Status )\n      WITH CORRESPONDING #( keys )\n      RESULT DATA(tasks).\n\n    DATA(valid) = VALUE string_table(\n      ( `OPEN` ) ( `IN_PROGRESS` ) ( `DONE` ) ).\n\n    LOOP AT tasks INTO DATA(task).\n      IF task-Status IS NOT INITIAL AND\n         NOT line_exists( valid[ table_line = task-Status ] ).\n        APPEND VALUE #( %tky = task-%tky ) TO failed-Task.\n        APPEND VALUE #(\n          %tky            = task-%tky\n          %state_area     = ‘VALIDATE_STATUS’\n          %msg            = new_message_with_text(\n            severity = if_abap_behv_message=>severity-error\n            text     = |Status ‘| && task-Status &&\n                       |’ inválido. Use: OPEN, IN_PROGRESS o DONE.| )\n          %element-Status = if_abap_behv=>mk-on\n        ) TO reported-Task.\n      ENDIF.\n    ENDLOOP.\n  ENDMETHOD.\n\n═══════════════════════════════════════════════\nPASO 4 — Implementar setDefaultStatus\n═══════════════════════════════════════════════\n  METHOD setDefaultStatus.\n    READ ENTITIES OF ZI_TASKS IN LOCAL MODE\n      ENTITY Task FIELDS ( TaskId Status )\n      WITH CORRESPONDING #( keys )\n      RESULT DATA(tasks).\n\n    MODIFY ENTITIES OF ZI_TASKS IN LOCAL MODE\n      ENTITY Task UPDATE FIELDS ( Status )\n      WITH VALUE #(\n        FOR task IN tasks WHERE ( Status IS INITIAL )\n        ( %tky = task-%tky  Status = ‘OPEN’\n          %control-Status = if_abap_behv=>mk-on ) ).\n  ENDMETHOD.\n\n═══════════════════════════════════════════════\nPASO 5 — Implementar markDone\n═══════════════════════════════════════════════\n  METHOD markDone.\n    MODIFY ENTITIES OF ZI_TASKS IN LOCAL MODE\n      ENTITY Task UPDATE FIELDS ( Status )\n      WITH VALUE #(\n        FOR key IN keys\n        ( %tky = key-%tky  Status = ‘DONE’\n          %control-Status = if_abap_behv=>mk-on ) )\n      FAILED   DATA(fu)\n      REPORTED DATA(ru).\n\n    APPEND CORRESPONDING #( fu-Task ) TO failed-Task.\n    APPEND CORRESPONDING #( ru-Task ) TO reported-Task.\n\n    READ ENTITIES OF ZI_TASKS IN LOCAL MODE\n      ENTITY Task ALL FIELDS WITH CORRESPONDING #( keys )\n      RESULT result.\n  ENDMETHOD.\n\n═══════════════════════════════════════════════\nPASO 6 — Activar\n═══════════════════════════════════════════════\n  Ctrl + F3 en ZBP_I_TASKS → sin errores\n\n✅ VERIFICACIÓN\n  Abre BDEF ZI_TASKS → no debe haber warnings de\n  métodos sin implementar.\n\nCONCEPTOS CLAVE:\n  IN LOCAL MODE     → Lee del buffer RAP, omite auth check\n  %tky              → Clave técnica interna RAP del registro\n  failed-Task       → Lista de registros con error\n  reported-Task     → Lista de mensajes a mostrar en UI\n  %element-X = mk-on → Resalta el campo X en rojo en Fiori\n  %control-X = mk-on → Marca el campo X para ser actualizado"
     },
     M05: {
-      explain: "Service: el mesero publica tu menú vía OData.",
-      exercise: "Checklist:\n- Service Definition\n- Service Binding activo\n- Probar GET"
+      explain: "El Service Definition declara qué entidades de tu BO son accesibles externamente y con qué alias. El Service Binding las convierte en un endpoint OData V4 activo. Con tipo ‘OData V4 - UI’ obtienes soporte completo para Fiori Elements: draft handling, paginación, $batch requests y el botón de Preview integrado en ADT. El servicio se expone sobre la Projection View (ZC_TASKS, prefijo C), no sobre la vista base ZI_TASKS — esta separación permite definir UI sin tocar el modelo de datos.",
+      exercise: "OBJETIVO: Exponer ZI_TASKS como servicio OData V4 listo\n          para Fiori Elements Preview.\n\nARTEFACTOS QUE CREARÁS:\n  • ZC_TASKS      — Projection View (vista de consumo)\n  • ZSD_TASKS     — Service Definition\n  • ZSB_TASKS_V4  — Service Binding (OData V4 - UI)\n\n═══════════════════════════════════════════════\nPASO 1 — Crear la Projection View ZC_TASKS\n═══════════════════════════════════════════════\n  1. New → Other → Core Data Services → Data Definition\n  2. Name: ZC_TASKS, Description: Proyección Tareas\n  3. Template: Define View Entity → Finish\n  4. Escribe:\n\n@EndUserText.label: ‘Tareas (Consumo)’\n@AccessControl.authorizationCheck: #NOT_REQUIRED\n@Metadata.allowExtensions: true\n\ndefine view entity ZC_TASKS\n  as projection on ZI_TASKS\n{\n  key TaskId,\n      Title,\n      Status,\n      Priority,\n      DueDate,\n      CreatedAt,\n      CreatedBy,\n      ChangedAt,\n      ChangedBy\n}\n\n  5. Ctrl + F3 para activar\n\n═══════════════════════════════════════════════\nPASO 2 — BDEF de proyección para ZC_TASKS\n═══════════════════════════════════════════════\n  1. Clic derecho en ZC_TASKS → New → Behavior Definition\n  2. Type: Projection → Finish\n  3. Escribe:\n\nprojection;\nstrict ( 2 );\n\ndefine behavior for ZC_TASKS alias Task\n{\n  use create;\n  use update;\n  use delete;\n  use action markDone;\n}\n\n  4. Ctrl + F3 para activar\n\n═══════════════════════════════════════════════\nPASO 3 — Crear la Service Definition\n═══════════════════════════════════════════════\n  1. Clic derecho en ZC_TASKS → New → Service Definition\n  2. Name: ZSD_TASKS → Finish\n  3. Verifica el contenido:\n\n@EndUserText.label: ‘Servicio de Tareas’\ndefine service ZSD_TASKS {\n  expose ZC_TASKS as Tasks;\n}\n\n  4. Ctrl + F3 para activar\n\n═══════════════════════════════════════════════\nPASO 4 — Crear el Service Binding\n═══════════════════════════════════════════════\n  1. Clic derecho en ZSD_TASKS → New → Service Binding\n  2. Completa:\n       Name:         ZSB_TASKS_V4\n       Description:  Binding Tareas OData V4\n       Binding Type: OData V4 - UI   ← CRÍTICO\n  3. Finish → se abre el editor del binding\n\n═══════════════════════════════════════════════\nPASO 5 — Publicar el endpoint\n═══════════════════════════════════════════════\n  1. En el editor del binding haz clic en PUBLISH\n  2. Espera la confirmación exitosa\n\n✅ VERIFICACIÓN\n  Después del Publish:\n  • Aparece la URL: /sap/opu/odata4/...\n  • La entidad ‘Tasks’ aparece en el panel inferior\n  • Clic en el ícono de Preview junto a ‘Tasks’\n    → Debe abrir el Fiori Elements en el navegador\n\n  ⚠️  Si no haces Publish, el endpoint NO existe.\n      Activar (Ctrl+F3) ≠ Publicar. Son pasos distintos."
     },
     M06: {
-      explain: "Fiori Elements: el menú se genera desde metadata.",
-      exercise: "Prueba:\n- Crear 3 tareas\n- Editar 1\n- Marcar DONE"
+      explain: "Fiori Elements genera la UI automáticamente leyendo las anotaciones @UI de tu CDS Projection View (ZC_TASKS). Con @UI.lineItem defines las columnas del List Report, con @UI.selectionField los filtros de búsqueda, con @UI.facet las secciones del Object Page y con @UI.identification los campos dentro de cada sección. No escribes HTML ni JavaScript — todo viene de los metadatos CDS. Después de añadir las anotaciones, el Preview de ADT muestra el resultado en tiempo real sin redesplegar.",
+      exercise: "OBJETIVO: Añadir anotaciones @UI a ZC_TASKS y verificar\n          el List Report y Object Page generados automáticamente.\n\n═══════════════════════════════════════════════\nPASO 1 — Actualizar ZC_TASKS con anotaciones @UI\n═══════════════════════════════════════════════\nReemplaza el contenido de ZC_TASKS con:\n\n@EndUserText.label: ‘Tareas (Consumo)’\n@AccessControl.authorizationCheck: #NOT_REQUIRED\n@Metadata.allowExtensions: true\n\n@UI.headerInfo: {\n  typeName: ‘Tarea’, typeNamePlural: ‘Tareas’,\n  title: { value: ‘Title’ } }\n\n@UI.selectionField: [\n  { position: 10, element: ‘Title’    },\n  { position: 20, element: ‘Status’   },\n  { position: 30, element: ‘Priority’ } ]\n\n@UI.facet: [\n  { id: ‘General’, purpose: #STANDARD,\n    type: #IDENTIFICATION_REFERENCE,\n    label: ‘Información General’, position: 10 } ]\n\ndefine view entity ZC_TASKS\n  as projection on ZI_TASKS\n{\n  @UI.lineItem:      [{ position: 10, importance: #HIGH }]\n  @UI.identification:[{ position: 10, qualifier: ‘General’ }]\n  key TaskId,\n\n  @UI.lineItem:      [{ position: 20, importance: #HIGH }]\n  @UI.identification:[{ position: 20, qualifier: ‘General’ }]\n  Title,\n\n  @UI.lineItem:      [{ position: 30, importance: #HIGH }]\n  @UI.identification:[{ position: 30, qualifier: ‘General’ }]\n  Status,\n\n  @UI.lineItem:      [{ position: 40, importance: #MEDIUM }]\n  @UI.identification:[{ position: 40, qualifier: ‘General’ }]\n  Priority,\n\n  @UI.lineItem:      [{ position: 50, importance: #MEDIUM }]\n  @UI.identification:[{ position: 50, qualifier: ‘General’ }]\n  DueDate,\n\n  @UI.identification:[{ position: 60, qualifier: ‘General’ }]\n  CreatedAt,\n  @UI.identification:[{ position: 70, qualifier: ‘General’ }]\n  CreatedBy,\n  @UI.identification:[{ position: 80, qualifier: ‘General’ }]\n  ChangedAt,\n  @UI.identification:[{ position: 90, qualifier: ‘General’ }]\n  ChangedBy\n}\n\n═══════════════════════════════════════════════\nPASO 2 — Activar y abrir el Preview\n═══════════════════════════════════════════════\n  1. Ctrl + F3 para activar ZC_TASKS\n  2. Abre ZSB_TASKS_V4\n  3. Junto a ‘Tasks’ haz clic en el ícono de Preview\n  4. Se abre el List Report en el navegador\n\n═══════════════════════════════════════════════\nPASO 3 — Prueba funcional\n═══════════════════════════════════════════════\n  ☐ El List Report muestra columnas: Title, Status, Priority...\n  ☐ La barra de filtros tiene: Title, Status, Priority\n  ☐ Clic en una tarea → Object Page con sección ‘Información General’\n  ☐ El Object Page tiene el título de la tarea como header\n  ☐ Botón ‘Mark Done’ visible en la toolbar\n\nANOTACIONES CLAVE:\n  @UI.lineItem       → columnas en la tabla del List Report\n  @UI.selectionField → filtros en la barra de búsqueda\n  @UI.facet          → secciones/tabs en el Object Page\n  @UI.identification → campos dentro de cada sección\n  @UI.headerInfo     → título y subtítulo del Object Page\n  importance: #HIGH  → siempre visible (incluso en mobile)\n  importance: #MEDIUM → visible en tablets y desktop\n  importance: #LOW   → solo en desktop o bajo demanda"
     },
     M07: {
-      explain: "Mensajes claros: sin mensajes, el usuario se frustra.",
-      exercise: "Escribe 2 mensajes:\n- Title vacío\n- Status inválido"
+      explain: "Los mensajes RAP usan la interfaz IF_ABAP_BEHV_MESSAGE para comunicar errores, advertencias e información directamente en la UI de Fiori sin salir del Object Page. Un mensaje efectivo tiene: severidad correcta (error bloquea el save, warning permite guardar, info es solo informativo), texto claro con el valor incorrecto y la corrección esperada, y referencia al campo problemático (%element-FieldName) para que Fiori lo resalte visualmente. El %state_area evita que el mismo mensaje aparezca duplicado si el usuario corrige y vuelve a guardar.",
+      exercise: "OBJETIVO: Mejorar los mensajes de ZBP_I_TASKS para que\n          sean claros, específicos y resalten el campo correcto.\n\n═══════════════════════════════════════════════\nANATOMÍA DE UN MENSAJE RAP\n═══════════════════════════════════════════════\nAPPEND VALUE #(\n  %tky          = task-%tky       \"Identifica el registro\n  %state_area   = ‘AREA_UNICA’    \"Evita mensajes duplicados\n  %msg          = new_message_with_text(\n    severity = if_abap_behv_message=>severity-error\n    text     = ‘Descripción clara del problema’ )\n  %element-Campo = if_abap_behv=>mk-on  \"Resalta el campo en UI\n) TO reported-Task.\n\nSEVERIDADES:\n  severity-error       → Rojo, bloquea el guardado\n  severity-warning     → Amarillo, permite guardar con aviso\n  severity-information → Azul, solo informativo\n  severity-success     → Verde, confirmación de acción\n\n═══════════════════════════════════════════════\nPASO 1 — Mejorar validateTitle\n═══════════════════════════════════════════════\nActualiza el %msg de validateTitle:\n\n  %msg = new_message_with_text(\n    severity = if_abap_behv_message=>severity-error\n    text = ‘El título es obligatorio.’ &&\n           ‘ Ingresa un nombre descriptivo (máx. 100 caracteres).’ )\n\n═══════════════════════════════════════════════\nPASO 2 — Mejorar validateStatus con valor dinámico\n═══════════════════════════════════════════════\n  %msg = new_message_with_text(\n    severity = if_abap_behv_message=>severity-error\n    text = |Status ‘| && task-Status &&\n           |’ no es válido. Valores aceptados: OPEN, IN_PROGRESS, DONE.| )\n\n  💡 La sintaxis | | es string template literal de ABAP.\n     Permite insertar variables directamente en el texto.\n\n═══════════════════════════════════════════════\nPASO 3 — Agregar validación de DueDate\n═══════════════════════════════════════════════\nPrimero agrega en el BDEF ZI_TASKS:\n  validation validateDueDate on save { field DueDate; create; update; }\n\nLuego en ZBP_I_TASKS agrega:\n\n  METHOD validateDueDate.\n    READ ENTITIES OF ZI_TASKS IN LOCAL MODE\n      ENTITY Task FIELDS ( TaskId DueDate )\n      WITH CORRESPONDING #( keys )\n      RESULT DATA(tasks).\n\n    LOOP AT tasks INTO DATA(task).\n      IF task-DueDate IS NOT INITIAL AND\n         task-DueDate < cl_abap_context_info=>get_system_date( ).\n        APPEND VALUE #( %tky = task-%tky ) TO failed-Task.\n        APPEND VALUE #(\n          %tky             = task-%tky\n          %state_area      = ‘VALIDATE_DUE_DATE’\n          %msg             = new_message_with_text(\n            severity = if_abap_behv_message=>severity-warning\n            text     = ‘La fecha límite está en el pasado.’ &&\n                       ‘ Considera actualizar la fecha.’ )\n          %element-DueDate = if_abap_behv=>mk-on\n        ) TO reported-Task.\n      ENDIF.\n    ENDLOOP.\n  ENDMETHOD.\n\n═══════════════════════════════════════════════\nPASO 4 — Activar y probar\n═══════════════════════════════════════════════\n  Ctrl + F3 en BDEF y ZBP_I_TASKS\n  Abre el Fiori Preview y prueba:\n  ☐ Crear sin título → campo Title en rojo con mensaje claro\n  ☐ Status inválido  → mensaje incluye el valor que escribiste\n  ☐ Fecha pasada     → warning amarillo en campo DueDate\n  ☐ Todo correcto    → guardado exitoso, sin mensajes"
     },
     M08: {
-      explain: "Cierre: flujo end-to-end mínimo (datos → comportamiento → servicio → UI).",
-      exercise: "Checklist final:\n- CDS\n- Behavior\n- Validations\n- Service\n- UI operativa"
+      explain: "En este módulo final conectas y verificas toda la cadena RAP: tabla → CDS → BDEF → implementación → servicio → UI. El flujo de guardado es: 1) Determinations (setDefaultStatus), 2) Validations (validateTitle, validateStatus, validateDueDate), 3) Save a ZTASKS. Si una validación falla, el save no ocurre y Fiori muestra los mensajes. La acción markDone retorna $self (el registro actualizado) para que Fiori refresque la UI sin recarga de página. Si algo no funciona, el checklist te indica exactamente en qué capa está la ruptura.",
+      exercise: "OBJETIVO: Verificar el flujo completo end-to-end de la\n          app de Tareas en el Fiori Elements Preview de ADT.\n\n═══════════════════════════════════════════════\nCHECKLIST DE ARTEFACTOS (todos deben estar activos)\n═══════════════════════════════════════════════\n  ☐ ZTASKS         — Tabla activa, sin errores\n  ☐ ZI_TASKS       — CDS Root View activa\n  ☐ ZI_TASKS BDEF  — sin warnings de métodos faltantes\n  ☐ ZBP_I_TASKS    — todos los métodos implementados\n  ☐ ZC_TASKS       — con anotaciones @UI\n  ☐ ZC_TASKS BDEF  — usa create, update, delete, markDone\n  ☐ ZSD_TASKS      — expone ZC_TASKS como ‘Tasks’\n  ☐ ZSB_TASKS_V4   — estado PUBLISHED (no solo activado)\n\n═══════════════════════════════════════════════\nPRUEBA 1 — Crear una tarea válida\n═══════════════════════════════════════════════\n  1. Abre Preview desde ZSB_TASKS_V4\n  2. Clic en ‘Create’\n  3. Title = ‘Mi primera tarea RAP’\n     Status = (vacío)\n     Priority = HIGH\n  4. Save\n  ✅ Esperado:\n     • Registro guardado, sin errores\n     • Status = OPEN (setDefaultStatus lo asignó)\n     • CreatedAt y CreatedBy poblados automáticamente\n\n═══════════════════════════════════════════════\nPRUEBA 2 — Validar título vacío\n═══════════════════════════════════════════════\n  1. Clic en ‘Create’\n  2. Deja Title en blanco, pon Status = OPEN\n  3. Save\n  ✅ Esperado:\n     • Campo Title resaltado en rojo\n     • Mensaje de error sobre obligatoriedad del título\n     • El registro NO se guarda en ZTASKS\n\n═══════════════════════════════════════════════\nPRUEBA 3 — Ejecutar acción MarkDone\n═══════════════════════════════════════════════\n  1. Selecciona la tarea de Prueba 1 en el List Report\n  2. Clic en el botón ‘Mark Done’\n  ✅ Esperado:\n     • Status cambia a DONE en pantalla inmediatamente\n     • ChangedAt y ChangedBy se actualizan\n     • No se recarga la página completa\n\n═══════════════════════════════════════════════\nPRUEBA 4 — Status inválido\n═══════════════════════════════════════════════\n  1. Abre el Object Page de una tarea\n  2. Clic en Edit\n  3. Cambia Status a ‘INVALIDO’\n  4. Save\n  ✅ Esperado:\n     • Campo Status resaltado en rojo\n     • Mensaje con ‘INVALIDO’ y los valores permitidos\n\n═══════════════════════════════════════════════\nFLUJO INTERNO DE RAP AL GUARDAR\n═══════════════════════════════════════════════\n  Save → Determinations → Validations → ¿Errores?\n    Con errores: failed/reported → UI muestra mensajes\n    Sin errores: COMMIT a ZTASKS → UI se refresca\n\n  Orden garantizado:\n  1. setDefaultStatus   (determination on create)\n  2. validateTitle      (validation on save)\n  3. validateStatus     (validation on save)\n  4. validateDueDate    (validation on save)\n  5. COMMIT en ZTASKS\n\n═══════════════════════════════════════════════\nDIAGNÓSTICO RÁPIDO SI ALGO FALLA\n═══════════════════════════════════════════════\n  Preview muestra 404\n    → ZSB_TASKS_V4 no está publicado (falta clic en Publish)\n\n  Status no se asigna como OPEN al crear\n    → Verifica METHOD setDefaultStatus en ZBP_I_TASKS\n\n  Botón ‘Mark Done’ no aparece\n    → BDEF de proyección ZC_TASKS no incluye: use action markDone;\n\n  Mensajes de error no aparecen en la UI\n    → Verifica que reported-Task esté siendo llenado\n    → Verifica %element-FieldName = if_abap_behv=>mk-on\n\n  Campos CreatedAt/CreatedBy vacíos\n    → Verifica que la tabla usa abp_creation_tstmpl y abp_creation_user"
     }
   };
 
@@ -736,7 +748,11 @@
   }
 
   // ✅ IMPORTANTE: En vez de getUser(), usamos SIEMPRE session.user cuando exista
+  // Fix: guard de concurrencia + manejo granular de errores por paso
   async function refreshData(){
+    if(refreshing) return;
+    refreshing = true;
+
     try{
       if(!currentUser){
         currentProfile = null;
@@ -749,18 +765,56 @@
         return;
       }
 
-      // 1) Profile
-      currentProfile = await loadMyProfile();
+      // 1) Perfil (no crítico: si falla, continúa con rol null)
+      try{
+        currentProfile = await loadMyProfile();
+      } catch(e){
+        console.error("[refreshData] loadMyProfile:", e?.message || e);
+        currentProfile = null;
+      }
 
-      // 2) Curso data
-      await loadModules();
-      await loadQuizQuestions();
-
-      // 3) Progreso usuario
-      await loadMyProgress();
-      await loadMyAttempts();
-
+      // Actualiza la UI de auth antes de mostrar cualquier error
       setAuthUI();
+
+      // 2) Módulos del curso (crítico: sin módulos no hay nada que mostrar)
+      try{
+        await loadModules();
+      } catch(e){
+        setUserMsg("No se pudieron cargar los módulos: " + (e?.message || e), true);
+        return;
+      }
+
+      if(modules.length === 0){
+        setUserMsg(
+          "No se encontraron módulos. Verifica en Supabase: " +
+          "¿la tabla 'modules' tiene filas? ¿RLS permite SELECT a usuarios autenticados?",
+          true
+        );
+        renderModules();
+        return;
+      }
+
+      // 3) Preguntas del quiz (no crítico: quiz queda vacío si falla)
+      try{
+        await loadQuizQuestions();
+      } catch(e){
+        console.error("[refreshData] loadQuizQuestions:", e?.message || e);
+      }
+
+      // 4) Progreso del usuario (no crítico: muestra 0% si falla)
+      try{
+        await loadMyProgress();
+      } catch(e){
+        console.error("[refreshData] loadMyProgress:", e?.message || e);
+      }
+
+      // 5) Intentos de quiz (no crítico)
+      try{
+        await loadMyAttempts();
+      } catch(e){
+        console.error("[refreshData] loadMyAttempts:", e?.message || e);
+      }
+
       renderModules();
 
       if(selectedModule && modules.some(m => m.code === selectedModule)){
@@ -768,11 +822,14 @@
       }
 
       if(currentProfile?.role === "instructor"){
-        await loadInstructorDashboard();
+        try{
+          await loadInstructorDashboard();
+        } catch(e){
+          console.error("[refreshData] loadInstructorDashboard:", e?.message || e);
+        }
       }
-    } catch (e){
-      // Si algo falla, lo verás aquí (no silencios)
-      setUserMsg("Error cargando datos: " + (e?.message || e), true);
+    } finally {
+      refreshing = false;
     }
   }
 
@@ -780,6 +837,15 @@
     btn.disabled = locked;
     btn.textContent = locked ? "Procesando..." : (btn.id === "btnSignUp" ? "Crear cuenta" : "Iniciar sesión");
   }
+
+  // Toggle del campo de código instructor
+  document.getElementById('chkInstructor').addEventListener('change', function() {
+    document.getElementById('instructorCodeRow').style.display =
+      this.checked ? 'block' : 'none';
+  });
+
+  // Refresh del panel instructor
+  document.getElementById('btnRefreshInstructor').addEventListener('click', loadInstructorDashboard);
 
   el("btnSignUp").addEventListener("click", async () => {
     const btn = el("btnSignUp");
@@ -796,10 +862,22 @@
 
       setAuthMsg("Creando cuenta...", false);
 
+      // Determinar rol según checkbox e instructor code
+      let role = 'student';
+      const chkInst = document.getElementById('chkInstructor');
+      if (chkInst && chkInst.checked) {
+        const code = document.getElementById('instructorCode').value.trim();
+        if (code !== 'RAP2024INST') {
+          lock(btn, false);
+          return setAuthMsg('Código de instructor incorrecto.', true);
+        }
+        role = 'instructor';
+      }
+
       const { error } = await supabase.auth.signUp({
         email: em,
         password: pw,
-        options: { data: { full_name: nm, cohort: ch || null } }
+        options: { data: { full_name: nm, cohort: ch || null, role } }
       });
 
       if(error) return setAuthMsg("No se pudo crear cuenta: " + error.message, true);
