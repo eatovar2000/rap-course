@@ -110,6 +110,14 @@
         <label>Cohorte (opcional)</label>
         <input id="cohort" placeholder="Ej: Marzo 2026" />
 
+        <label style="cursor:pointer;display:flex;align-items:center;gap:6px;margin-top:4px;">
+          <input type="checkbox" id="chkInstructor"> Registrarme como Instructor
+        </label>
+        <div id="instructorCodeRow" style="display:none;margin-top:6px;">
+          <label>Código de Instructor</label>
+          <input type="password" id="instructorCode" placeholder="Código secreto" />
+        </div>
+
         <div class="hr"></div>
 
         <label>Email</label>
@@ -193,7 +201,10 @@
   </div>
 
   <div class="card hide" style="margin-top:16px;" id="instructor">
-    <h2>Panel del Instructor</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <h2>Panel del Instructor</h2>
+      <button class="btn" id="btnRefreshInstructor" style="font-size:0.85rem;">↻ Actualizar</button>
+    </div>
     <p class="small">Avance por estudiante + detalle de fallos (pregunta, respondió, correcta).</p>
     <div class="hr"></div>
     <table>
@@ -827,6 +838,15 @@
     btn.textContent = locked ? "Procesando..." : (btn.id === "btnSignUp" ? "Crear cuenta" : "Iniciar sesión");
   }
 
+  // Toggle del campo de código instructor
+  document.getElementById('chkInstructor').addEventListener('change', function() {
+    document.getElementById('instructorCodeRow').style.display =
+      this.checked ? 'block' : 'none';
+  });
+
+  // Refresh del panel instructor
+  document.getElementById('btnRefreshInstructor').addEventListener('click', loadInstructorDashboard);
+
   el("btnSignUp").addEventListener("click", async () => {
     const btn = el("btnSignUp");
     lock(btn, true);
@@ -842,10 +862,22 @@
 
       setAuthMsg("Creando cuenta...", false);
 
+      // Determinar rol según checkbox e instructor code
+      let role = 'student';
+      const chkInst = document.getElementById('chkInstructor');
+      if (chkInst && chkInst.checked) {
+        const code = document.getElementById('instructorCode').value.trim();
+        if (code !== 'RAP2024INST') {
+          lock(btn, false);
+          return setAuthMsg('Código de instructor incorrecto.', true);
+        }
+        role = 'instructor';
+      }
+
       const { error } = await supabase.auth.signUp({
         email: em,
         password: pw,
-        options: { data: { full_name: nm, cohort: ch || null } }
+        options: { data: { full_name: nm, cohort: ch || null, role } }
       });
 
       if(error) return setAuthMsg("No se pudo crear cuenta: " + error.message, true);
